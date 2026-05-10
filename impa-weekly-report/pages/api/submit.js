@@ -20,8 +20,17 @@ export default async function handler(req, res) {
       blockers,
     } = req.body
 
-    const tasksCompleted = tasks.filter(t => t.done).length
-    const reportTitle = `${analyst} — Week ${weekNumber} (${weekOf})`
+    // Filter out empty items
+    const cleanDeals = deals.filter(d => d.name?.trim())
+    const cleanContacts = contacts.filter(c => c.name?.trim())
+    const cleanResearch = research.filter(r => r.title?.trim())
+    const cleanEvents = events.filter(e => e.name?.trim())
+    const cleanContent = contentOutput.filter(c => c.title?.trim())
+    const cleanTasks = tasks.filter(t => t.text?.trim())
+    const tasksCompleted = cleanTasks.filter(t => t.done).length
+
+    const weekLabel = weekNumber ? `Week ${weekNumber}` : ''
+    const reportTitle = `${analyst} — ${weekLabel} (${weekOf})`
 
     await notion.pages.create({
       parent: { database_id: DATABASE_ID },
@@ -42,43 +51,35 @@ export default async function handler(req, res) {
           select: { name: 'Submitted' },
         },
         'Deals Sourced': {
-          number: deals.length,
+          number: cleanDeals.length,
         },
         'Contacts Added': {
-          number: contacts.length,
+          number: cleanContacts.length,
         },
         'Research Topics': {
-          number: research.length,
+          number: cleanResearch.length,
         },
         'Tasks Completed': {
           number: tasksCompleted,
         },
-        'Sourcing Deals': {
-          rich_text: [{ text: { content: JSON.stringify(deals) } }],
-        },
-        'Sourcing Contacts': {
-          rich_text: [{ text: { content: JSON.stringify(contacts) } }],
-        },
-        'Research': {
-          rich_text: [{ text: { content: JSON.stringify(research) } }],
-        },
-        'Events': {
-          rich_text: [{ text: { content: JSON.stringify(events) } }],
-        },
-        'Content Output': {
-          rich_text: [{ text: { content: JSON.stringify(contentOutput) } }],
-        },
-        'Tasks': {
-          rich_text: [{ text: { content: JSON.stringify(tasks) } }],
-        },
         'Summary': {
-          rich_text: [{ text: { content: summary } }],
+          rich_text: [{ text: { content: summary || '' } }],
         },
         'Blockers': {
-          rich_text: [{ text: { content: blockers } }],
+          rich_text: [{ text: { content: blockers || '' } }],
         },
       },
-      children: buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, research, events, contentOutput, tasks, summary, blockers }),
+      children: buildPageContent({
+        analyst, weekOf, weekNumber,
+        deals: cleanDeals,
+        contacts: cleanContacts,
+        research: cleanResearch,
+        events: cleanEvents,
+        contentOutput: cleanContent,
+        tasks: cleanTasks,
+        summary,
+        blockers,
+      }),
     })
 
     return res.status(200).json({ success: true })
@@ -119,7 +120,7 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
   })
 
   // Header
-  blocks.push(para(`Analyst: ${analyst}  |  Week ${weekNumber}  |  ${weekOf}`))
+  blocks.push(para(`Analyst: ${analyst}  |  Week ${weekNumber || '—'}  |  ${weekOf}`))
   blocks.push(divider())
 
   // Sourcing — Deals
@@ -128,7 +129,8 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
     blocks.push(para('No deals this week.'))
   } else {
     deals.forEach(d => {
-      blocks.push(bullet(`${d.name} · ${d.stage || ''} · ${d.sector || ''} · via ${d.source || '—'}`, true))
+      const meta = [d.stage, d.sector, d.source ? `via ${d.source}` : ''].filter(Boolean).join(' · ')
+      blocks.push(bullet(`${d.name}${meta ? '  ·  ' + meta : ''}`, true))
       if (d.status) blocks.push(bullet(`Status: ${d.status}`))
       if (d.notes) blocks.push(bullet(`Notes: ${d.notes}`))
     })
@@ -141,8 +143,9 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
     blocks.push(para('No contacts this week.'))
   } else {
     contacts.forEach(c => {
-      blocks.push(bullet(`${c.name} · ${c.role || ''} · ${c.type || ''}`, true))
-      if (c.purpose) blocks.push(bullet(`Purpose: ${c.purpose}`))
+      const meta = [c.role, c.type].filter(Boolean).join(' · ')
+      blocks.push(bullet(`${c.name}${meta ? '  ·  ' + meta : ''}`, true))
+      if (c.purpose) blocks.push(bullet(`Context: ${c.purpose}`))
     })
   }
   blocks.push(divider())
@@ -153,8 +156,8 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
     blocks.push(para('No research this week.'))
   } else {
     research.forEach(r => {
-      blocks.push(bullet(`${r.title} · ${r.sector || ''}`, true))
-      if (r.status) blocks.push(bullet(`Status: ${r.status}`))
+      const meta = [r.sector, r.status].filter(Boolean).join(' · ')
+      blocks.push(bullet(`${r.title}${meta ? '  ·  ' + meta : ''}`, true))
       if (r.output) blocks.push(bullet(`Output: ${r.output}`))
     })
   }
@@ -166,7 +169,7 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
     blocks.push(para('No events this week.'))
   } else {
     events.forEach(e => {
-      blocks.push(bullet(`${e.name} · ${e.date || ''}`, true))
+      blocks.push(bullet(`${e.name}${e.date ? '  ·  ' + e.date : ''}`, true))
       if (e.notes) blocks.push(bullet(`Notes: ${e.notes}`))
     })
   }
@@ -178,7 +181,7 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
     blocks.push(para('No content this week.'))
   } else {
     contentOutput.forEach(c => {
-      blocks.push(bullet(`${c.title} · ${c.platform || ''}`, true))
+      blocks.push(bullet(`${c.title}${c.platform ? '  ·  ' + c.platform : ''}`, true))
       if (c.link) blocks.push(bullet(`Link: ${c.link}`))
     })
   }
@@ -186,16 +189,22 @@ function buildPageContent({ analyst, weekOf, weekNumber, deals, contacts, resear
 
   // Tasks
   blocks.push(heading('✅ Tasks'))
-  tasks.forEach(t => {
-    blocks.push(todo(`[${t.priority || 'Med'}] ${t.text}`, t.done))
-  })
+  if (tasks.length === 0) {
+    blocks.push(para('No tasks this week.'))
+  } else {
+    tasks.forEach(t => {
+      blocks.push(todo(`[${t.priority || 'Med'}] ${t.text}`, t.done))
+    })
+  }
   blocks.push(divider())
 
   // Summary & Blockers
   blocks.push(heading('📝 Summary'))
   blocks.push(para(summary))
-  blocks.push(heading('🚧 Blockers', 3))
-  blocks.push(para(blockers))
+  if (blockers?.trim()) {
+    blocks.push(heading('🚧 Blockers', 3))
+    blocks.push(para(blockers))
+  }
 
   return blocks
 }
